@@ -154,3 +154,41 @@ $ node server.js | bunyan
 
 Прежде всего, мобильное приложение тоже должно быть зарегистрировано в Azure AD. Эта процедура подробно описана в статье, на которую я уже неоднократно ссылался.
 
+Далее необходимо предоставить разрешение мобильному приложению на доступ к Web API. Для этого в Azure AD заходим в свойства мобильного приложения, нажимаем **Settings** -> **Required permissions** -> **Add** -> **Select an API**. В открывшемся списке выбираем (можно воспользоваться поиском) *NodeJSBearerRestServer* (или то имя, которое вы присвоили вашему Web API при регистрации), нажимаем **Select**. В разделе **SELECT PERMISSIONS** ставим галочку напротив выбранного сервера, нажимаем **Select** и затем **Done**.
+
+![AzureADPermissions](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/AzureADPermissions.PNG)
+
+Перейдем к коду приложения. Чтобы мобильное приложение понимало, для какого сервиса необходимо запрашивать токен в Azure AD и куда потом с этим токеном обращаться, используются два статических поля **graphResourceUri** и **RestUri** (файл *MainPage.xaml.cs*). В эти поля необходимо прописать соответственно **App ID URI** и endpoint только что настроенного и запущенного сервера.
+
+![XamarinApp](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/XamarinApp.PNG)
+
+Получение токена происходит в методе *btnLogin_Clicked()*, который можно найти там же в файле *MainPage.xaml.cs*.
+
+```
+private async void btnLogin_Clicked(object sender, EventArgs e)
+        {
+            try
+            {
+                var auth = DependencyService.Get<IAuthenticator>();
+                authResult = await auth.Authenticate(authority, graphResourceUri, clientId, returnUri);
+                string userUpn = authResult.UserInfo.DisplayableId.ToString();
+                int userAt = userUpn.IndexOf('@');
+                userLogin = userUpn.Substring(0, userAt);
+                var userName = authResult.UserInfo.GivenName + " " + authResult.UserInfo.FamilyName;
+                lblUserName.Text = userName;
+                lblMessage.Text = "Access Token: " + authResult.AccessToken.ToString();
+                await DisplayAlert("User Login", userLogin, "Ok", "Cancel");
+                AuthenticationContext ac = new AuthenticationContext(authority);
+                var cachedTokens = ac.TokenCache.ReadItems();
+                lblMessage.Text = "Cached Tokens: " + cachedTokens.ToString();
+                btnLogout.IsEnabled = true;
+            }
+            catch (Exception ex)
+            {
+                await DisplayAlert("Error", ex.Message, "Ok");
+            }
+        }
+```
+
+
+
