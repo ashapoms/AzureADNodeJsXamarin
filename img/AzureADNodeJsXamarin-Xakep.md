@@ -190,5 +190,53 @@ private async void btnLogin_Clicked(object sender, EventArgs e)
         }
 ```
 
+Если аутентификация прошла успешно, полученный токен сохраняется в **authResult**.
+
+Далее в коде можно найти три метода (*btnCallRestAdal_Clicked()*, *btnAddTaskRestAdal_Clicked()*, *btnDeleteTaskRestAdal_Clicked()*), которые получают, добавляют и удаляют задачи для конкретного пользователя соответственно. И во всех трех случаях обращение к Web API выглядит однотипно – формируется нужный URI, в заголовок запроса добавляется полученный токен, вот так:
+
+```
+client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", authResult.AccessToken);
+```
+
+После чего вызывается метод, реализующий требуемый запрос (GET, POST или DELETE). Например, для получения списка задач пользователя в методе *btnCallRestAdal_Clicked()* к URL сервера добавляется логин пользователя (его можно найти в токене) и вызывается метод *GetAsync()*.
+
+```
+        private async void btnCallRestAdal_Clicked(object sender, EventArgs e)
+        {
+
+            if (!(authResult is null))
+            {
+                client.MaxResponseContentBufferSize = 256000;
+                var uri = new Uri(string.Format(RestUri + userLogin, string.Empty));
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", authResult.AccessToken);
+
+                try
+                {
+                    var response = await client.GetAsync(uri);
+                    if (response.IsSuccessStatusCode)
+                    {
+                        lblMessage.Text = await response.Content.ReadAsStringAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lblMessage.Text = $"ERROR: {ex.Message}";
+                }
+            }
+            else
+                lblMessage.Text = "Please press Login to Azure button first";
+        }
+```
 
 
+## Тестирование сквозной аутентификации
+
+Мы сконфигурировали и запустили сервис на Node.js, сконфигурировали мобильное приложение, и, если теперь его запустить, можно протестировать весь процесс сквозной аутентификации. Ниже приведены скриншоты, которые отражают логин пользователя и получение его списка задач.
+
+![Mob01](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/Mob01.PNG)
+![Mob102](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/Mob102.PNG)
+![Mob103](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/Mob103.PNG)
+![Mob104](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/Mob104.PNG)
+![Mob105](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/Mob105.PNG)
+
+В заключение отмечу, получив токен, сервер может быть уверен, что запрашивающий ресурсы пользователь успешно прошел аутентификацию. Более того, сервер понимает, какой конкретно пользователь к нему обращается – имя пользователя и логин доступны в токене. А это означает, что дальше разработчик может реализовать в Web API любую логику авторизации для любой используемой подсистемы, будь то MongoDB, SQL Server, SAP или что-то еще.
