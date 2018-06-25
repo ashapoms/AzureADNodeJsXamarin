@@ -57,3 +57,100 @@
 и **App ID URI**.
 
 ![AppIDURI](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/AppIDURI.PNG)
+
+Кроме того, нам пригодится идентификатор нашего каталога Azure AD, так называемый **Tenant ID** (или по-другому **Directory ID**). Найти его можно в разделе **Azure Active Directory** -> **Properties**.
+
+![TenantID](https://github.com/ashapoms/AzureADNodeJsXamarin/blob/master/img/TenantID.PNG)
+
+Теперь можно перейти непосредственно к приложению Node.js. В нашем примере сервис REST API построен с использованием Restify, а задачи аутентификации решаются с применением популярного middleware [Passport](http://www.passportjs.org/). Microsoft, в свою очередь, разработала [passport-azure-ad](https://github.com/AzureAD/passport-azure-ad) – плагин для Passport, реализующий интеграцию нодовских приложений с Azure AD. Это не единственный способ подружить Node.js с Azure AD, но, с моей точки зрения, наиболее простой и удобный.
+
+Все настройки, связанные с Azure AD, находятся в файле *config.js*. Для нашего сценария принципиальны три параметра, которые мы и рассмотрим.
+
+С помощью первого параметра **identityMetadata** мы говорим нашему приложению, как получить необходимые метаданные об Azure AD (вспомните диаграмму процесса аутентификации): где находится Authorization Endpoint, где находится Token Endpoint, откуда загрузить сертификат для проверки токенов и пр. Если Web API обслуживает запросы от приложений только одного тенанта, что характерно для корпоративной среды (одна компания – один тенант), то параметр должен выглядеть так:
+
+```
+identityMetadata: 'https://login.microsoftonline.com/<<Insert_your_tenant_ID_here>>/.well-known/openid-configuration'
+```
+
+В эту строку надо подставить идентификатор тенанта (Directory ID), скопированный на одном из предыдущих шагов. Если же ваш Web API является мультитенантным приложением, то значение должно быть иным:
+
+```
+identityMetadata: ' https://login.microsoftonline.com/common/.well-known/openid-configuration'
+```
+
+Во второй параметр **clientID** копируем значение **Application ID**, полученное при регистрации Web API в Azure AD.
+
+```
+clientID: '<<Insert client ID of your REST API Server here>>'
+```
+
+Строго говоря, этот шаг не принципиален, если к Web API обращается нативное приложение, потому что пользователь уже прошел аутентификацию с его помощью, и токен уже получен. Но если предполагается, что к серверу могут обращаться пользователи и через браузер, и такие запросы также должны быть аутентифицированы Azure AD, то в коде Web API необходимо предусмотреть редирект в Azure AD. На какой URL перенаправлять для аутентификации сервер уже знает из **identityMetadata**. Остается в редирект добавить свой **clientID**, чтобы Azure AD понимала, на какой URL вернуть пользователя после успешной проверки.
+
+Выглядит это примерно так:
+1. Azure AD получает редирект-запрос, в котором присутствует **clientID** перенаправившего Web API.
+2. Azure AD отображает страницу аутентификации, пользователь вводит логин и пароль.
+3. Если все в порядке, Azure AD находит в своей базе зарегистрированное приложение с **Application ID** равным полученному в запросе **clientID**, в настройках приложения находит поле **Reply URLs** и перенаправляет браузер на URL, указанный в этом поле.
+
+Наконец, третий параметр, который нас интересует, audience. Сюда мы копируем полученное при регистрации значение **App ID URI**.
+
+```
+audience: '<<Insert App ID URI of your REST API Server here>>'
+```
+
+Напомню, получив токен от мобильного приложения и проверив его подпись и срок действия, сервер сравнивает значение поля **audience** из токена со значением, которое прописано в данном параметре. Если значения совпадают, значит токен действительно предназначен для сервера, а не какого-то иного приложения.
+
+Теперь заглянем в *app.js*. Здесь, пожалуй, требуют пояснения два момента. Во-первых, при инициализации сервера следующий код создает стратегию аутентификации на основе рассмотренных параметров:
+
+```
+// Let's start using Passport.js
+
+server.use(passport.initialize()); // Starts passport
+server.use(passport.session()); // Provides session support
+
+var bearerStrategy = new OIDCBearerStrategy(options,
+    function(token, done) {
+        log.info(token, 'was the token retreived');
+        if (!token.oid)
+            done(new Error('oid is not found in token'));
+        else {
+            owner = token.oid;
+            done(null, token);
+        }
+    }
+);
+
+passport.use(bearerStrategy);
+```
+
+Во-вторых, вот так выглядят хендлеры, которые задействуют настроенную стратегию при каждом запросе к Web API, проверяя с ее помощью передаваемый в запросе токен.
+
+```
+// Handlers with protection
+server.get('/api/tasks/:owner', passport.authenticate('oauth-bearer', {
+    session: false
+}), listTasks);
+server.post('/api/tasks/:owner/:Text', passport.authenticate('oauth-bearer', {
+    session: false
+}), createTask);
+server.del('/api/tasks/:owner/:Text', passport.authenticate('oauth-bearer', {
+    session: false
+}), removeTask);
+```
+
+Вся рутинная работа выполняется методами passport-azure-ad, вам об этом заботиться не нужно.
+
+Теперь, когда все готово, можно запустить наш сервер. Для более удобочитаемого логирования я использую библиотеку [bunyan](https://github.com/trentm/node-bunyan).
+
+```
+$ node server.js | bunyan
+```
+
+Для работы с Web API необходимо обращаться на endpoint http://localhost:3000/api/tasks
+
+Осталось посмотреть на настройки мобильного приложения и код, который, собственно, формирует запрос к Web API и предает токен.
+
+
+## Настройка мобильного приложения Xamarin
+
+Прежде всего, мобильное приложение тоже должно быть зарегистрировано в Azure AD. Эта процедура подробно описана в статье, на которую я уже неоднократно ссылался.
+
